@@ -64,7 +64,7 @@ The app/ai adapter and app/api/planning workflow implement only approved intake 
 
 The user explicitly approved AI intake and initial planning as Phase 3, superseding the original Budget Guardian sequencing. A request first commits an owner-scoped run and releases admission locks. The synchronous, deadline-bounded provider call runs outside the event transaction. Strict output validation and integer allocation precede a short transaction that rechecks the event revision, updates confirmed intake, inserts a new draft and audit, and completes the run. Failed or stale runs preserve existing plans.
 
-Responses uses a required, nullable extraction schema and a separate proposal schema. Models propose category weights; Python computes amounts and calendar dates. Plan JSON is stored on EventPlanVersion, without materializing BudgetItem/Task rows or introducing approval/replanning behavior. UI revisions and idempotency keys protect edits and uncertain retries. See API.md for request semantics and SECURITY.md for disclosure, limits and residual risks.
+Gemini uses a required, nullable extraction schema and a separate proposal schema. Models propose category weights; Python computes amounts and calendar dates. Initial plan JSON is stored on EventPlanVersion, without materializing BudgetItem/Task rows or automatically approving a replan. UI revisions and idempotency keys protect edits and uncertain retries. See API.md for request semantics and SECURITY.md for disclosure, limits and residual risks.
 
 ## Retained Phase 0 proposals for later phases
 
@@ -126,7 +126,7 @@ Before an approved plan exists, event inputs may be edited directly. After appro
 
 ## AI contract and failure behavior
 
-Use the Responses API for schema-shaped proposals. Its Structured Outputs format is `text.format` with a supported JSON Schema; unsupported schemas and refusal/incomplete responses require explicit handling. Schema conformity does not establish arithmetic or factual correctness. [Official Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
+The current adapter uses Gemini `generateContent` with JSON output and a supported response schema. Unsupported schemas and refusal/incomplete responses require explicit handling. Schema conformity does not establish arithmetic or factual correctness. [Official Gemini structured output guide](https://ai.google.dev/gemini-api/docs/structured-output). The provider change preserves the application validation, arithmetic, ownership and approval boundaries below.
 
 Function calling asks the application to execute a capability; the application must validate and authorize every call. Use strict argument schemas and an explicit capability allowlist. Initial capabilities only read authorized event data or run pure budget/timeline calculations. Saving a draft, approval, external sharing, and financial actions are not model permissions. [Official function calling guide](https://developers.openai.com/api/docs/guides/function-calling).
 

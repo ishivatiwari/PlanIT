@@ -154,16 +154,16 @@ async function proxy(
     } else if (
       request.nextUrl.search &&
       (/\/vendors$/.test(path) ||
-        /\/budget$/.test(path) ||
+        new RegExp(`/budget(?:/items(?:/${uuid})?)?$`).test(path) ||
         /\/export$/.test(path))
     ) {
+      const queryKeys = /\/vendors$/.test(path)
+        ? ["category", "provenance", "sort"]
+        : /\/export$/.test(path)
+          ? ["format"]
+          : ["scenario"];
       for (const [key, value] of request.nextUrl.searchParams) {
-        if (
-          !["category", "provenance", "sort", "scenario", "format"].includes(
-            key,
-          ) ||
-          value.length > 80
-        )
+        if (!queryKeys.includes(key) || value.length > 80)
           return fail(422, "VALIDATION_ERROR", "Invalid comparison query.");
         upstream.searchParams.append(key, value);
       }

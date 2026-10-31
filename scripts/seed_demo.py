@@ -247,7 +247,7 @@ def main() -> None:
                         category=category["category"],
                         description=category["description"],
                         currency="INR",
-                    unit_amount_minor=category["estimated_amount_minor"],
+                        unit_amount_minor=category["estimated_amount_minor"],
                         estimated_minor=category["estimated_amount_minor"],
                         planned_minor=category["estimated_amount_minor"],
                         scenario="balanced",

@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "@/lib/api";
 import { formatMoney, parseMinor } from "@/lib/money";
-import { RequireAccount } from "./auth-provider";
+import { RequireAccount, useAuth } from "./auth-provider";
 import { Button, ButtonLink } from "./ui/button";
 import { Card } from "./ui/card";
 import { LoadingState, Message } from "./ui/feedback";
@@ -41,6 +41,15 @@ type Task = {
 };
 
 export function BudgetTimeline({ eventId }: { eventId: string }) {
+  return (
+    <RequireAccount>
+      <BudgetTimelineContent key={eventId} eventId={eventId} />
+    </RequireAccount>
+  );
+}
+
+function BudgetTimelineContent({ eventId }: { eventId: string }) {
+  const { session } = useAuth();
   const [event, setEvent] = useState<Event | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -60,8 +69,13 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
     dueAt: "",
     description: "",
   });
-  const [saving, setSaving] = useState<"budget" | "task" | string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const largestCategory = Math.max(
+    ...(summary?.category_totals.map((item) => item.planned_minor) ?? []),
+    1,
+  );
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
@@ -87,11 +101,12 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
 
   async function addBudget(submission: FormEvent<HTMLFormElement>) {
     submission.preventDefault();
-    if (!event || !summary) return;
+    if (!event || !summary || !session || saving) return;
     try {
       setSaving("budget");
       await api(`/events/${eventId}/budget/items?scenario=${scenario}`, {
         method: "POST",
+        csrf: session.csrf_token,
         revision: event.revision,
         data: {
           category: budget.category,
@@ -110,6 +125,7 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
         actual: "",
       });
       await refresh();
+      setNotice("Budget line saved.");
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
@@ -119,11 +135,12 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
 
   async function addTask(submission: FormEvent<HTMLFormElement>) {
     submission.preventDefault();
-    if (!event) return;
+    if (!event || !session || saving) return;
     try {
       setSaving("task");
       await api(`/events/${eventId}/timeline/tasks`, {
         method: "POST",
+        csrf: session.csrf_token,
         revision: event.revision,
         data: {
           title: task.title,
@@ -141,6 +158,26 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
         description: "",
       });
       await refresh();
+      setNotice("Timeline task saved.");
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function updateTask(taskId: string, status: string) {
+    if (!event || !session || saving) return;
+    setSaving(taskId);
+    try {
+      await api(`/events/${eventId}/timeline/tasks/${taskId}`, {
+        method: "PATCH",
+        csrf: session.csrf_token,
+        revision: event.revision,
+        data: { status },
+      });
+      await refresh();
+      setNotice("Task progress saved.");
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
@@ -149,18 +186,18 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
   }
 
   return (
-    <RequireAccount>
+    <>
       {loading ? (
         <LoadingState label="Opening deterministic budget and timeline..." />
       ) : (
-        <main className="workspace-main">
+        <div className="workspace-main">
           <ButtonLink href={`/events/${eventId}`} variant="ghost">
             Back to event
           </ButtonLink>
           <div className="page-intro event-page-heading">
             <div>
               <p className="eyebrow">Deterministic planning</p>
-              <h1>{event?.title}</h1>
+              <h1>{event?.title ?? "Budget and timeline"}</h1>
               <p className="section-description">
                 Persisted budget totals and task deadlines. Values are
                 recalculated by the server.
@@ -182,7 +219,7 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
             </div>
           </div>
           {error && (
-            <Message tone="error" title="Could not load planning data" announce>
+            <Message tone="error" title="Planning needs attention" announce>
               {error}
             </Message>
           )}
@@ -238,8 +275,7 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
                       <dd>
                         {formatMoney(
                           summary.projected_overrun_minor ||
-                            summary.remaining_minor ||
-                            0,
+                            summary.remaining_minor,
                           summary.currency,
                         )}
                       </dd>
@@ -251,12 +287,6 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
                     aria-label="Planned budget by category"
                   >
                     {summary.category_totals.map((item) => {
-                      const max = Math.max(
-                        ...summary.category_totals.map(
-                          (entry) => entry.planned_minor,
-                        ),
-                        1,
-                      );
                       return (
                         <div className="budget-bar-row" key={item.category}>
                           <span>{item.category}</span>
@@ -264,7 +294,7 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
                             <span
                               className="budget-bar-fill"
                               style={{
-                                width: `${Math.round((item.planned_minor / max) * 100)}%`,
+                                width: `${Math.round((item.planned_minor / largestCategory) * 100)}%`,
                               }}
                             />
                           </span>
@@ -304,6 +334,21 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
                       )}
                       {task.delayed && <b>Delayed</b>}
                       {task.critical && <b>Critical</b>}
+                      {event?.status !== "archived" && (
+                        <SelectField
+                          label={`Progress for ${task.title}`}
+                          value={task.status}
+                          disabled={saving !== null}
+                          onChange={(e) =>
+                            void updateTask(task.id, e.target.value)
+                          }
+                        >
+                          <option value="todo">To do</option>
+                          <option value="in_progress">In progress</option>
+                          <option value="done">Done</option>
+                          <option value="cancelled">Cancelled</option>
+                        </SelectField>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -313,137 +358,143 @@ export function BudgetTimeline({ eventId }: { eventId: string }) {
               </Button>
             </Card>
           </div>
-          {event?.status !== "archived" && (
+          {notice && <Message tone="success" title={notice} announce />}
+          {event && summary && event.status !== "archived" && (
             <section
               className="planning-columns"
               aria-label="Add budget and timeline records"
             >
               <Card>
                 <form className="plan-form" onSubmit={addBudget}>
-                  <h2>Add budget line</h2>
-                  <p className="section-description">
-                    Amounts are recorded in {summary?.currency} and recalculated
-                    on the server.
-                  </p>
-                  <div className="form-grid">
-                    <TextField
-                      required
-                      label="Category"
-                      value={budget.category}
-                      onChange={(e) =>
-                        setBudget({ ...budget, category: e.target.value })
-                      }
-                      placeholder="Catering"
-                    />
-                    <TextField
-                      required
-                      label="Description"
-                      value={budget.description}
-                      onChange={(e) =>
-                        setBudget({ ...budget, description: e.target.value })
-                      }
-                      placeholder="Dinner service"
-                    />
-                    <TextField
-                      label="Estimated"
-                      inputMode="decimal"
-                      value={budget.estimated}
-                      onChange={(e) =>
-                        setBudget({ ...budget, estimated: e.target.value })
-                      }
-                    />
-                    <TextField
-                      label="Planned"
-                      inputMode="decimal"
-                      value={budget.planned}
-                      onChange={(e) =>
-                        setBudget({ ...budget, planned: e.target.value })
-                      }
-                    />
-                    <TextField
-                      label="Actual"
-                      inputMode="decimal"
-                      value={budget.actual}
-                      onChange={(e) =>
-                        setBudget({ ...budget, actual: e.target.value })
-                      }
-                    />
-                  </div>
-                  <Button
-                    type="submit"
-                    loading={saving === "budget"}
-                    loadingLabel="Adding budget line..."
-                  >
-                    Add budget line
-                  </Button>
+                  <fieldset disabled={saving !== null}>
+                    <h2>Add budget line</h2>
+                    <p className="section-description">
+                      Amounts are recorded in {summary?.currency} and
+                      recalculated on the server.
+                    </p>
+                    <div className="form-grid">
+                      <TextField
+                        required
+                        label="Category"
+                        value={budget.category}
+                        onChange={(e) =>
+                          setBudget({ ...budget, category: e.target.value })
+                        }
+                        placeholder="Catering"
+                      />
+                      <TextField
+                        required
+                        label="Description"
+                        value={budget.description}
+                        onChange={(e) =>
+                          setBudget({ ...budget, description: e.target.value })
+                        }
+                        placeholder="Dinner service"
+                      />
+                      <TextField
+                        label="Estimated"
+                        inputMode="decimal"
+                        value={budget.estimated}
+                        onChange={(e) =>
+                          setBudget({ ...budget, estimated: e.target.value })
+                        }
+                      />
+                      <TextField
+                        label="Planned"
+                        inputMode="decimal"
+                        value={budget.planned}
+                        onChange={(e) =>
+                          setBudget({ ...budget, planned: e.target.value })
+                        }
+                      />
+                      <TextField
+                        label="Actual"
+                        inputMode="decimal"
+                        value={budget.actual}
+                        onChange={(e) =>
+                          setBudget({ ...budget, actual: e.target.value })
+                        }
+                      />
+                    </div>
+                    <Button
+                      type="submit"
+                      loading={saving === "budget"}
+                      loadingLabel="Adding budget line..."
+                    >
+                      Add budget line
+                    </Button>
+                  </fieldset>
                 </form>
               </Card>
               <Card>
                 <form className="plan-form" onSubmit={addTask}>
-                  <h2>Add timeline task</h2>
-                  <p className="section-description">
-                    Deadlines must occur before the event begins.
-                  </p>
-                  <div className="form-grid">
-                    <TextField
-                      required
-                      label="Task"
-                      value={task.title}
+                  <fieldset disabled={saving !== null}>
+                    <h2>Add timeline task</h2>
+                    <p className="section-description">
+                      Deadlines must occur before the event begins.
+                    </p>
+                    <div className="form-grid">
+                      <TextField
+                        required
+                        label="Task"
+                        value={task.title}
+                        onChange={(e) =>
+                          setTask({ ...task, title: e.target.value })
+                        }
+                        placeholder="Confirm caterer"
+                      />
+                      <TextField
+                        label="Owner"
+                        value={task.owner}
+                        onChange={(e) =>
+                          setTask({ ...task, owner: e.target.value })
+                        }
+                        placeholder="Asha"
+                      />
+                      <SelectField
+                        label="Priority"
+                        value={task.priority}
+                        onChange={(e) =>
+                          setTask({ ...task, priority: e.target.value })
+                        }
+                      >
+                        <option value="low">Low</option>
+                        <option value="normal">Normal</option>
+                        <option value="high">High</option>
+                        <option value="critical">Critical</option>
+                      </SelectField>
+                      <TextField
+                        label="Due by"
+                        hint="Enter the deadline in your device's local timezone."
+                        type="datetime-local"
+                        value={task.dueAt}
+                        onChange={(e) =>
+                          setTask({ ...task, dueAt: e.target.value })
+                        }
+                      />
+                    </div>
+                    <TextAreaField
+                      label="Details"
+                      value={task.description}
                       onChange={(e) =>
-                        setTask({ ...task, title: e.target.value })
+                        setTask({ ...task, description: e.target.value })
                       }
-                      placeholder="Confirm caterer"
+                      placeholder="Useful context for this task"
                     />
-                    <TextField
-                      label="Owner"
-                      value={task.owner}
-                      onChange={(e) =>
-                        setTask({ ...task, owner: e.target.value })
-                      }
-                      placeholder="Asha"
-                    />
-                    <SelectField
-                      label="Priority"
-                      value={task.priority}
-                      onChange={(e) =>
-                        setTask({ ...task, priority: e.target.value })
-                      }
+                    <Button
+                      type="submit"
+                      loading={saving === "task"}
+                      loadingLabel="Adding task..."
                     >
-                      <option value="low">Low</option>
-                      <option value="normal">Normal</option>
-                      <option value="high">High</option>
-                      <option value="critical">Critical</option>
-                    </SelectField>
-                    <TextField
-                      label="Due by"
-                      type="datetime-local"
-                      value={task.dueAt}
-                      onChange={(e) =>
-                        setTask({ ...task, dueAt: e.target.value })
-                      }
-                    />
-                  </div>
-                  <TextAreaField
-                    label="Details"
-                    value={task.description}
-                    onChange={(e) =>
-                      setTask({ ...task, description: e.target.value })
-                    }
-                    placeholder="Useful context for this task"
-                  />
-                  <Button
-                    type="submit"
-                    loading={saving === "task"}
-                    loadingLabel="Adding task..."
-                  >
-                    Add task
-                  </Button>
+                      Add task
+                    </Button>
+                  </fieldset>
                 </form>
               </Card>
             </section>
           )}
-        </main>
+        </div>
       )}
-    </RequireAccount>
+    </>
   );
 }

@@ -46,10 +46,13 @@ def analyze_replan(
             for r in alternative.get("budget_categories", [])
             if any(w in r["category"].lower() for w in ("cater", "food", "beverage"))
         ]
-        ratio = new_guests / old_guests if old_guests else 1
         for row in alternative.get("budget_categories", []):
             if row["category"] in affected:
-                row["estimated_amount_minor"] = int(row["estimated_amount_minor"] * ratio)
+                row["estimated_amount_minor"] = (
+                    row["estimated_amount_minor"] * new_guests // old_guests
+                    if old_guests
+                    else row["estimated_amount_minor"]
+                )
         assumptions.append(
             f"Catering-related estimates scale from {old_guests} to {new_guests} guests; other categories are unchanged."
         )

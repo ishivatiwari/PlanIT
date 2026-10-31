@@ -410,7 +410,7 @@ function Workspace({ id }: { id: string }) {
       )}
       {!status?.enabled && (
         <Message title="AI planning is not configured">
-          Your saved drafts remain available. Set the backend OpenAI model and
+          Your saved drafts remain available. Set the backend Gemini model and
           credentials to enable new generation.
         </Message>
       )}
@@ -449,9 +449,9 @@ function Workspace({ id }: { id: string }) {
                 onChange={(e) => setConsent(e.target.checked)}
               />
               <span>
-                Send this description and relevant event details to OpenAI to
-                draft suggestions. Avoid guest names, contacts and other private
-                information.
+                Send this description and relevant event details to Google
+                Gemini to draft suggestions. Avoid guest names, contacts and
+                other private information.
               </span>
             </label>
             <Button

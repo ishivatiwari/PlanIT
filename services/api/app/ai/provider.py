@@ -88,9 +88,7 @@ class GeminiProvider:
             raise ProviderFailure("AI_DISABLED")
         schema = Extraction if operation == "intake" else ModelPlan
         body = {
-            "systemInstruction": {
-                "parts": [{"text": INTAKE if operation == "intake" else PLAN}]
-            },
+            "systemInstruction": {"parts": [{"text": INTAKE if operation == "intake" else PLAN}]},
             "contents": [{"role": "user", "parts": [{"text": json.dumps(context)}]}],
             "generationConfig": {
                 "responseMimeType": "application/json",
@@ -169,13 +167,20 @@ def parse_gemini_response(payload: bytes, metrics: Metrics) -> dict[str, Any]:
         if len(candidates) != 1:
             raise ProviderFailure("AI_INCOMPLETE")
         candidate = candidates[0]
-        if candidate.get("finishReason") not in {None, "STOP"}:
+        if candidate.get("finishReason") in {
+            "SAFETY",
+            "RECITATION",
+            "BLOCKLIST",
+            "PROHIBITED_CONTENT",
+            "SPII",
+        }:
+            raise ProviderFailure("AI_REFUSED")
+        if candidate.get("finishReason") != "STOP":
             raise ProviderFailure("AI_INCOMPLETE")
-        parts = [
-            part["text"]
-            for part in candidate.get("content", {}).get("parts", [])
-            if "text" in part
-        ]
+        content_parts = candidate.get("content", {}).get("parts", [])
+        if any("text" not in part or "functionCall" in part for part in content_parts):
+            raise ProviderFailure("AI_INVALID_OUTPUT")
+        parts = [part["text"] for part in content_parts if not part.get("thought", False)]
         if len(parts) != 1:
             raise ProviderFailure("AI_INVALID_OUTPUT")
         parsed = json.loads(parts[0])

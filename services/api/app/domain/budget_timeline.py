@@ -1,11 +1,9 @@
 """Pure deterministic budget and dependency scheduling rules."""
-# SQLAlchemy model collections are intentionally structural here; runtime validation
-# is performed by the Pydantic/API boundary.
-# mypy: ignore-errors
 
 from collections import defaultdict, deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
+from typing import Any, Protocol
 from uuid import UUID
 
 from app.domain.schemas import MAX_MONEY
@@ -13,14 +11,38 @@ from app.domain.schemas import MAX_MONEY
 SCENARIOS = {"economical", "balanced", "premium"}
 
 
+class BudgetRow(Protocol):
+    @property
+    def scenario(self) -> str: ...
+    @property
+    def estimated_minor(self) -> int: ...
+    @property
+    def planned_minor(self) -> int: ...
+    @property
+    def actual_minor(self) -> int: ...
+
+
+class ScheduledTask(Protocol):
+    @property
+    def id(self) -> UUID: ...
+    @property
+    def depends_on(self) -> Sequence[str | UUID]: ...
+    @property
+    def due_at(self) -> datetime | None: ...
+    @property
+    def priority(self) -> str: ...
+    @property
+    def status(self) -> str: ...
+
+
 def budget_summary(
-    items: Iterable[object],
+    items: Iterable[BudgetRow],
     ceiling: int | None,
     reserve_bps: int,
     scenario: str,
     currency: str,
-    before=None,
-):
+    before: dict[str, int] | None = None,
+) -> dict[str, Any]:
     if scenario not in SCENARIOS or not 0 <= reserve_bps <= 5000:
         raise ValueError("Invalid scenario or contingency reserve.")
     rows = [i for i in items if i.scenario == scenario]
@@ -66,20 +88,20 @@ def budget_summary(
 
 
 def validate_dependencies(
-    tasks: Iterable[object], event_start: datetime | None, event_end: datetime | None
-):
+    tasks: Iterable[ScheduledTask], event_start: datetime | None, event_end: datetime | None
+) -> list[UUID]:
     rows = list(tasks)
     ids = {t.id for t in rows}
     graph = {t.id: [UUID(str(dep)) for dep in (t.depends_on or [])] for t in rows}
-    for task, deps in graph.items():
-        if any(dep not in ids or dep == task for dep in deps):
+    for task_id, deps in graph.items():
+        if any(dep not in ids or dep == task_id for dep in deps):
             raise ValueError("Task dependency references a missing task or itself.")
     indegree = {i: 0 for i in ids}
-    outgoing = defaultdict(list)
-    for task, deps in graph.items():
+    outgoing: dict[UUID, list[UUID]] = defaultdict(list)
+    for task_id, deps in graph.items():
         for dep in deps:
-            indegree[task] += 1
-            outgoing[dep].append(task)
+            indegree[task_id] += 1
+            outgoing[dep].append(task_id)
     queue = deque(i for i, v in indegree.items() if v == 0)
     ordered = []
     while queue:
@@ -99,11 +121,13 @@ def validate_dependencies(
     return ordered
 
 
-def task_analysis(tasks: Iterable[object], now: datetime | None = None):
+def task_analysis(
+    tasks: Iterable[ScheduledTask], now: datetime | None = None
+) -> tuple[set[UUID], set[UUID], dict[UUID, list[UUID]]]:
     rows = list(tasks)
     now = now or datetime.now(UTC)
     ids = {t.id for t in rows}
-    outgoing = defaultdict(list)
+    outgoing: dict[UUID, list[UUID]] = defaultdict(list)
     for t in rows:
         for dep in t.depends_on or []:
             outgoing[UUID(str(dep))].append(t.id)
@@ -115,7 +139,7 @@ def task_analysis(tasks: Iterable[object], now: datetime | None = None):
     delayed = {
         t.id for t in rows if t.due_at and t.due_at < now and t.status not in {"done", "cancelled"}
     }
-    impact = {i: [] for i in ids}
+    impact: dict[UUID, list[UUID]] = {i: [] for i in ids}
     for root in delayed:
         stack = list(outgoing[root])
         seen = set(stack)

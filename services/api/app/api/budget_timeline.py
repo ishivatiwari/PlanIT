@@ -1,8 +1,7 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime
-
-# mypy: ignore-errors
 from typing import Annotated, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, Query, Request
 from sqlalchemy import select
@@ -11,7 +10,7 @@ from app.api.dependencies import DB
 from app.api.events import audit, owned_event, precondition
 from app.core.auth import Authenticated, AuthorizedMutation
 from app.core.errors import APIError
-from app.db.models import BudgetItem, EventPlanVersion, Task
+from app.db.models import BudgetItem, Event, EventPlanVersion, Task
 from app.domain.budget_timeline import budget_summary, task_analysis, validate_dependencies
 from app.domain.schemas import (
     BudgetItemPatch,
@@ -25,7 +24,7 @@ from app.domain.schemas import (
 router = APIRouter(prefix="/api/v1/events/{event_id}", tags=["Budget and timeline"])
 
 
-def _items(db, event_id, owner):
+def _items(db: DB, event_id: UUID, owner: UUID) -> Sequence[BudgetItem]:
     owned_event(db, event_id, owner)
     return db.scalars(
         select(BudgetItem)
@@ -34,21 +33,43 @@ def _items(db, event_id, owner):
     ).all()
 
 
+def editable_event(db: DB, event_id: UUID, owner: UUID, if_match: str | None) -> Event:
+    event = owned_event(db, event_id, owner, lock=True)
+    precondition(event, if_match)
+    if event.status == "archived":
+        raise APIError(409, "EVENT_ARCHIVED", "Archived events are read-only.")
+    return event
+
+
+def validate_timeline(rows: Sequence[Task], event: Event) -> None:
+    try:
+        validate_dependencies(rows, event.starts_at, event.ends_at)
+    except ValueError as exc:
+        raise APIError(422, "INVALID_TIMELINE", str(exc)) from None
+
+
+def summarize_budget(db: DB, event: Event, scenario: str) -> dict[str, Any]:
+    try:
+        return budget_summary(
+            _items(db, event.id, event.owner_id),
+            event.budget_ceiling_minor,
+            event.contingency_bps,
+            scenario,
+            event.currency,
+        )
+    except ValueError as exc:
+        raise APIError(422, "INVALID_BUDGET", str(exc)) from None
+
+
 @router.get("/budget", response_model=BudgetSummary)
 def get_budget(
     event_id: UUID,
     db: DB,
     identity: Authenticated,
     scenario: Annotated[str, Query(pattern="^(economical|balanced|premium)$")] = "balanced",
-):
+) -> dict[str, Any]:
     event = owned_event(db, event_id, identity.user.id)
-    return budget_summary(
-        _items(db, event_id, identity.user.id),
-        event.budget_ceiling_minor,
-        event.contingency_bps,
-        scenario,
-        event.currency,
-    )
+    return summarize_budget(db, event, scenario)
 
 
 @router.post("/budget/items", response_model=BudgetSummary, status_code=201)
@@ -60,11 +81,8 @@ def add_budget(
     identity: AuthorizedMutation,
     if_match: Annotated[str | None, Header()] = None,
     scenario: Annotated[str, Query(pattern="^(economical|balanced|premium)$")] = "balanced",
-):
-    event = owned_event(db, event_id, identity.user.id, lock=True)
-    precondition(event, if_match)
-    if event.status == "archived":
-        raise APIError(409, "EVENT_ARCHIVED", "Archived events are read-only.")
+) -> dict[str, Any]:
+    event = editable_event(db, event_id, identity.user.id, if_match)
     plan = db.scalar(
         select(EventPlanVersion)
         .where(EventPlanVersion.event_id == event_id)
@@ -86,18 +104,16 @@ def add_budget(
     event.revision += 1
     event.updated_at = datetime.now(UTC)
     audit(db, request, event, "event.updated", ["budget"])
+    db.flush()
+    result = summarize_budget(db, event, scenario)
+    if item.scenario != scenario:
+        summarize_budget(db, event, item.scenario)
     db.commit()
-    return budget_summary(
-        _items(db, event_id, identity.user.id),
-        event.budget_ceiling_minor,
-        event.contingency_bps,
-        scenario,
-        event.currency,
-    )
+    return result
 
 
 @router.get("/timeline", response_model=list[TaskRead])
-def get_timeline(event_id: UUID, db: DB, identity: Authenticated):
+def get_timeline(event_id: UUID, db: DB, identity: Authenticated) -> list[TaskRead]:
     event = owned_event(db, event_id, identity.user.id)
     rows = db.scalars(
         select(Task).where(Task.event_id == event_id).order_by(Task.due_at.nullslast(), Task.id)
@@ -131,8 +147,7 @@ def edit_budget(
     if_match: Annotated[str | None, Header()] = None,
     scenario: Annotated[str, Query(pattern="^(economical|balanced|premium)$")] = "balanced",
 ) -> dict[str, Any]:
-    event = owned_event(db, event_id, identity.user.id, lock=True)
-    precondition(event, if_match)
+    event = editable_event(db, event_id, identity.user.id, if_match)
     item = db.scalar(
         select(BudgetItem)
         .where(BudgetItem.id == item_id, BudgetItem.event_id == event_id)
@@ -140,32 +155,23 @@ def edit_budget(
     )
     if not item:
         raise APIError(404, "BUDGET_ITEM_NOT_FOUND", "This budget item could not be found.")
-    before = budget_summary(
-        _items(db, event_id, identity.user.id),
-        event.budget_ceiling_minor,
-        event.contingency_bps,
-        scenario,
-        event.currency,
-    )
+    before = summarize_budget(db, event, scenario)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(item, key, value)
     event.revision += 1
     event.updated_at = datetime.now(UTC)
     audit(db, request, event, "event.updated", ["budget"])
-    db.commit()
-    after = budget_summary(
-        _items(db, event_id, identity.user.id),
-        event.budget_ceiling_minor,
-        event.contingency_bps,
-        scenario,
-        event.currency,
-    )
+    db.flush()
+    after = summarize_budget(db, event, scenario)
+    if item.scenario != scenario:
+        summarize_budget(db, event, item.scenario)
     after["before"] = {
         k: before[k] for k in ("estimated_minor", "planned_minor", "actual_minor", "reserve_minor")
     }
     after["after"] = {
         k: after[k] for k in ("estimated_minor", "planned_minor", "actual_minor", "reserve_minor")
     }
+    db.commit()
     return after
 
 
@@ -177,11 +183,11 @@ def add_task(
     db: DB,
     identity: AuthorizedMutation,
     if_match: Annotated[str | None, Header()] = None,
-):
-    event = owned_event(db, event_id, identity.user.id, lock=True)
-    precondition(event, if_match)
+) -> TaskRead:
+    event = editable_event(db, event_id, identity.user.id, if_match)
     rows = db.scalars(select(Task).where(Task.event_id == event_id)).all()
     candidate = Task(
+        id=uuid4(),
         event_id=event_id,
         title=payload.title,
         description=payload.description,
@@ -190,7 +196,7 @@ def add_task(
         due_at=payload.due_at,
         depends_on=[str(dep) for dep in payload.depends_on],
     )
-    validate_dependencies([*rows, candidate], event.starts_at, event.ends_at)
+    validate_timeline([*rows, candidate], event)
     db.add(candidate)
     event.revision += 1
     event.updated_at = datetime.now(UTC)
@@ -210,26 +216,24 @@ def edit_task(
     db: DB,
     identity: AuthorizedMutation,
     if_match: Annotated[str | None, Header()] = None,
-):
-    event = owned_event(db, event_id, identity.user.id, lock=True)
-    precondition(event, if_match)
+) -> TaskRead:
+    event = editable_event(db, event_id, identity.user.id, if_match)
     task = db.scalar(
         select(Task).where(Task.id == task_id, Task.event_id == event_id).with_for_update()
     )
     if not task:
         raise APIError(404, "TASK_NOT_FOUND", "This task could not be found.")
     changes = payload.model_dump(exclude_unset=True)
-    if changes.get("status") == "done":
+    if "depends_on" in changes:
+        changes["depends_on"] = [str(dep) for dep in changes["depends_on"]]
+    if changes.get("status") == "done" and task.status != "done":
         changes["completed_at"] = datetime.now(UTC)
     if changes.get("status") and changes["status"] != "done":
         changes["completed_at"] = None
     for k, v in changes.items():
         setattr(task, k, v)
-    validate_dependencies(
-        db.scalars(select(Task).where(Task.event_id == event_id)).all(),
-        event.starts_at,
-        event.ends_at,
-    )
+    with db.no_autoflush:
+        validate_timeline(db.scalars(select(Task).where(Task.event_id == event_id)).all(), event)
     event.revision += 1
     event.updated_at = datetime.now(UTC)
     audit(db, request, event, "event.updated", ["timeline"])

@@ -8,7 +8,9 @@ from app.domain.budget_timeline import budget_summary, task_analysis, validate_d
 
 
 def item(scenario="balanced", estimated=100, planned=200, actual=50):
-    return SimpleNamespace(scenario=scenario, estimated_minor=estimated, planned_minor=planned, actual_minor=actual)
+    return SimpleNamespace(
+        scenario=scenario, estimated_minor=estimated, planned_minor=planned, actual_minor=actual
+    )
 
 
 def test_budget_scenarios_reserve_and_overrun_are_exact():
@@ -31,7 +33,10 @@ def test_budget_rejects_invalid_reserve_and_scenario():
 
 def test_dependencies_detect_cycle_and_impossible_deadline():
     first, second = uuid4(), uuid4()
-    tasks = [SimpleNamespace(id=first, depends_on=[second], due_at=None), SimpleNamespace(id=second, depends_on=[first], due_at=None)]
+    tasks = [
+        SimpleNamespace(id=first, depends_on=[second], due_at=None),
+        SimpleNamespace(id=second, depends_on=[first], due_at=None),
+    ]
     with pytest.raises(ValueError, match="cycle"):
         validate_dependencies(tasks, None, None)
     task = SimpleNamespace(id=first, depends_on=[], due_at=datetime(2030, 1, 2, tzinfo=UTC))
@@ -43,9 +48,27 @@ def test_delayed_task_impact_preserves_completed_tasks():
     root, child, done = uuid4(), uuid4(), uuid4()
     now = datetime.now(UTC)
     tasks = [
-        SimpleNamespace(id=root, depends_on=[], priority="critical", status="todo", due_at=now - timedelta(days=1)),
-        SimpleNamespace(id=child, depends_on=[root], priority="normal", status="todo", due_at=now + timedelta(days=1)),
-        SimpleNamespace(id=done, depends_on=[root], priority="normal", status="done", due_at=now - timedelta(days=1)),
+        SimpleNamespace(
+            id=root,
+            depends_on=[],
+            priority="critical",
+            status="todo",
+            due_at=now - timedelta(days=1),
+        ),
+        SimpleNamespace(
+            id=child,
+            depends_on=[root],
+            priority="normal",
+            status="todo",
+            due_at=now + timedelta(days=1),
+        ),
+        SimpleNamespace(
+            id=done,
+            depends_on=[root],
+            priority="normal",
+            status="done",
+            due_at=now - timedelta(days=1),
+        ),
     ]
     critical, delayed, impact = task_analysis(tasks, now)
     assert root in critical and root in delayed and child in impact[root]

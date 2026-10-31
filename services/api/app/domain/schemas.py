@@ -247,6 +247,14 @@ class BudgetItemPatch(Contract):
     actual_minor: Money | None = None
     scenario: Literal["economical", "balanced", "premium"] | None = None
 
+    @model_validator(mode="after")
+    def non_null_changes(self) -> Self:
+        if any(getattr(self, name) is None for name in self.model_fields_set):
+            raise ValueError(
+                "Budget fields cannot be null; omit fields that should stay unchanged."
+            )
+        return self
+
 
 class BudgetSummary(Contract):
     currency: Currency
@@ -287,6 +295,14 @@ class TaskPatch(Contract):
     due_at: datetime | None = None
     status: Literal["todo", "in_progress", "done", "cancelled"] | None = None
     depends_on: list[UUID] | None = Field(default=None, max_length=20)
+
+    @model_validator(mode="after")
+    def valid_changes(self) -> Self:
+        if any(getattr(self, name) is None for name in self.model_fields_set - {"due_at"}):
+            raise ValueError("Only the deadline can be cleared; other task fields cannot be null.")
+        if self.due_at is not None and self.due_at.tzinfo is None:
+            raise ValueError("Task deadlines must include a timezone offset.")
+        return self
 
 
 class TaskRead(Contract):

@@ -2,6 +2,54 @@
   max-width: 38rem;
   margin: 0 auto;
 }
+.planning-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+  margin-block: 1.5rem;
+}
+.planning-columns > .card,
+.replan-card {
+  min-width: 0;
+  padding: 1.5rem;
+  overflow-wrap: anywhere;
+}
+.replan-card {
+  margin-block: 1.5rem;
+}
+.plan-form fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 1rem;
+}
+.metric-list > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 0.5rem;
+}
+.metric-list dd {
+  margin: 0;
+}
+.task-list {
+  padding: 0;
+  list-style: none;
+}
+.task-list li {
+  display: grid;
+  gap: 0.5rem;
+  padding-block: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+@media (max-width: 1100px) {
+  .planning-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .consent-check {
   display: flex;
   align-items: flex-start;
@@ -15,7 +63,7 @@
   width: 1.25rem;
   height: 1.25rem;
   margin-top: 0.2rem;
-  accent-color: var(--primary);
+  accent-color: var(--green);
 }
 .planning-result {
   margin-top: 2rem;
@@ -72,13 +120,13 @@
   height: 0.55rem;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--surface-muted);
+  background: var(--pale);
 }
 .budget-bar-fill {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--primary);
+  background: var(--green);
 }
 .recent-runs {
   margin-top: 1.5rem;
@@ -283,6 +331,9 @@ textarea.input {
   }
 }
 @media (max-width: 640px) {
+  .budget-bar-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .event-grid,
   .form-grid,
   .detail-grid {

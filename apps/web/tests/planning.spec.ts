@@ -119,6 +119,69 @@ test("extract, clarify, generate, edit, save and reload a structured plan", asyn
   expect(
     (await page.request.get(`/api/v1/events/${event.id}/plans`)).status(),
   ).toBe(200);
+
+  // Exercise the real owner-scoped API through the web controls and proxy.
+  await page.goto(`/events/${event.id}/budget`);
+  expect(
+    (
+      await page.request.get(`/api/v1/events/${event.id}/budget?format=json`)
+    ).status(),
+  ).toBe(422);
+  await page
+    .getByRole("textbox", { name: "Category (required)", exact: true })
+    .fill("Venue");
+  await page
+    .getByRole("textbox", { name: "Description (required)", exact: true })
+    .fill("Room rental");
+  await page.getByLabel("Planned", { exact: true }).fill("1250.50");
+  await page
+    .getByRole("button", { name: "Add budget line", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Budget line saved" }),
+  ).toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Task (required)", exact: true })
+    .fill("Confirm venue");
+  await page.getByLabel("Owner", { exact: true }).fill("Host");
+  await page.getByRole("button", { name: "Add task", exact: true }).click();
+  const progress = page.getByLabel("Progress for Confirm venue");
+  await progress.selectOption("done");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Task progress saved" }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Progress for Confirm venue")).toHaveValue(
+    "done",
+  );
+  await accessible(page);
+  await expect(page.getByRole("main")).toHaveCount(1);
+  await expect(page.locator(".budget-bar-fill")).not.toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  await page.screenshot({
+    path: `test-results/budget-${test.info().project.name}.png`,
+    fullPage: true,
+  });
+  await page.addStyleTag({ content: "html { font-size: 200% !important; }" });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(320);
+  await page.goto(`/events/${event.id}/replan`);
+  await page.getByLabel("Change detail").fill("40");
+  await page.getByRole("button", { name: "Analyse impact" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Before and after review" }),
+  ).toBeVisible();
+  await accessible(page);
+  await page.getByRole("button", { name: "Reject proposal" }).click();
+  await expect(page.getByText("Status: rejected")).toBeVisible();
+  await page.goto(`/events/${event.id}/vendors`);
+  await expect(
+    page.getByRole("heading", { name: "Vendors and requirements" }),
+  ).toBeVisible();
+  await accessible(page);
 });
 
 test("a provider failure is recoverable and never fabricates a draft", async ({

@@ -99,9 +99,7 @@ def test_owner_scoped_event_exports_are_downloadable(store):
         assert json_export.status_code == 200
         assert json_export.headers["content-disposition"].endswith('.json"')
         assert json_export.json()["event"]["guest_count"] == 300
-        markdown = client.get(
-            f"/api/v1/events/{event['id']}/export?format=markdown", headers=owner
-        )
+        markdown = client.get(f"/api/v1/events/{event['id']}/export?format=markdown", headers=owner)
         assert markdown.status_code == 200
         assert "Estimates and provenance labels" in markdown.text
         other = account(client, "other_exporter")

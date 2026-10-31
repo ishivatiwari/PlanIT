@@ -10,7 +10,7 @@ The clean migration-cycle test first truncates the explicitly disposable _test d
 
 The complete browser suite has 46 desktop/mobile Chromium cases, including four new planning cases and the 42 preserved foundation/event cases. Planning cases exercise extract/clarify/generate/edit/save/reload, recoverable provider failure, Axe, overflow and 320px/200% text reflow. The iPhone preset is Chromium, not Safari. Automated accessibility success is not WCAG certification; screen-reader and real-device reviews remain outstanding.
 
-Live synthetic checks are separate from automated fixtures: real OpenAI Responses calls use the configured gpt-5.6-luna model, validate extraction/proposal schemas and deterministic totals, and record only calls, latency and reported token counts. The ignored .local verification artifacts contain synthetic output; no live user event or guest contact information is used. These smoke checks establish connectivity and a working sample, not comprehensive model quality or adversarial robustness.
+Live synthetic checks are separate from automated fixtures. The current adapter uses Google Gemini with `GEMINI_MODEL`; historical OpenAI smoke results do not verify this provider. A live check should validate extraction/proposal schemas and deterministic totals and record only calls, latency and reported token counts. Use synthetic data, never live guest contact information. These checks establish connectivity and a working sample, not comprehensive model quality or adversarial robustness. The corrective quality pass uses isolated provider fixtures; see [evaluation readiness](EVALUATION_READINESS.md) for current execution evidence.
 
 ## Backend commands
 

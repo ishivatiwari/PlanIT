@@ -17,7 +17,7 @@ def main() -> None:
     parser.add_argument(
         "--ai-fixtures",
         action="store_true",
-        help="Use explicitly labeled test-only provider responses; no OpenAI calls.",
+        help="Use explicitly labeled test-only provider responses; no live AI calls.",
     )
     args = parser.parse_args()
     values = dotenv_values(ROOT / ".env")

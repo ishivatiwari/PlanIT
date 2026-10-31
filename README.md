@@ -3,7 +3,7 @@
 
 Phase 8 demo readiness: reproducible wedding seed data, persisted exports, deployment handoff and demonstration instructions are documented in [PHASE_8_REPORT.md](docs/PHASE_8_REPORT.md) and [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
-A welcoming workspace for weddings, birthdays and community events. **Phase 7 hardens and audits the completed Phase 1–6 workflows. Phase 8 requires separate approval.**
+A welcoming workspace for weddings, birthdays and community events. Phases 1–8 are locally implemented. The current corrective quality pass preserves the approved scope; Phase 9 still requires separate approval. See [evaluation readiness](docs/EVALUATION_READINESS.md) for fixes, reproducible checks and remaining limits.
 
 Continue without installing Docker. The native Node.js, Python and PostgreSQL workflow below is the development path. Dockerfiles, Compose and container CI remain available; actual container execution and remote CI are unverified.
 
@@ -82,6 +82,9 @@ For optional Compose, place the same AI settings in ignored `.env.compose` or th
 | /design-system | Interactive local component examples; sample updates are not saved |
 | /events/[id]/planning | Natural-language intake, clarification, reviewed generation and draft history |
 | /events/[id]/plans/[planId] | Review/edit/save an owned draft; stale and archived drafts are read-only |
+| /events/[id]/budget | Exact scenario budgets, persisted task creation and progress updates, plan/checklist exports |
+| /events/[id]/replan | Review change impacts and proposed allocations; explicitly accept or reject a proposal |
+| /events/[id]/vendors | Compare supplied vendor evidence and currency-formatted quotes |
 | /system-status | Live API/database readiness; signed-in AI configuration status (not a provider availability probe) |
 
 Development API docs: [http://127.0.0.1:8000/api/docs](http://127.0.0.1:8000/api/docs). Health probes work directly and through the web origin. Production disables OpenAPI/docs.
@@ -108,7 +111,7 @@ The local Compose profile uses APP_ENV=development and loopback HTTP; it is not 
 | --- | --- |
 | apps/web/src/app | Public/account/event routes, fallbacks, bounded API proxies |
 | apps/web/src/components, styles, lib | Shared UI, account/event views, theme, typed client, generated contracts and exact money |
-| services/api/app/api, ai, core, domain, db | Routes, bounded Responses adapter, auth/config/logging, validation, relational models and connections |
+| services/api/app/api, ai, core, domain, db | Routes, bounded Gemini adapter, auth/config/logging, validation, relational models and connections |
 | services/api/migrations, tests | Versioned schema, unit/API/PostgreSQL/concurrency/restart verification |
 | scripts | Native DB lifecycle, isolated browser-test API, contract generation, dependency/secret checks |
 | infra, compose.yaml, Dockerfiles | Optional container bootstrap/build/startup |
