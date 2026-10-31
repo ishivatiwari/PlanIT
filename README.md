@@ -1,5 +1,4 @@
 # PlanIT
-
 **PlanIT** is an AI-powered Celebration & Event Planning Command Center for weddings, birthdays, and community events.
 
 Phase 8 demo readiness: reproducible wedding seed data, persisted exports, deployment handoff and demonstration instructions are documented in [PHASE_8_REPORT.md](docs/PHASE_8_REPORT.md) and [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
@@ -114,4 +113,4 @@ The local Compose profile uses APP_ENV=development and loopback HTTP; it is not 
 
 English UI, INR and Asia/Kolkata defaults are editable. Accounts own events individually; organization sharing is not enabled. Runtime DB credentials cannot migrate or delete domain history. Read [architecture](docs/ARCHITECTURE.md), [design system](docs/DESIGN_SYSTEM.md), and [implementation plan](docs/IMPLEMENTATION_PLAN.md).
 
-Known limits: no password recovery/MFA or production account lifecycle, no Safari/Firefox/screen-reader audit, no container runtime/image scan or remote CI run. Next.js's current plugins require the pinned ESLint 9 despite its maintenance warning; revisit compatible dependencies/runtime patches before deployment. Native tests are not production approval. Git is locally initialized without commits/remote; nothing has been pushed or deployed.
+Known limits: no password recovery/MFA or production account lifecycle, no Safari/Firefox/screen-reader audit, no container runtime/image scan or remote CI run. Next.js's current plugins require the pinned ESLint 9 despite its maintenance warning; revisit compatible dependencies/runtime patches before deployment. Native tests are not production approval.
