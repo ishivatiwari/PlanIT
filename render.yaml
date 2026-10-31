@@ -14,7 +14,6 @@ services:
     runtime: docker
     dockerfilePath: services/api/Dockerfile
     dockerContext: .
-    healthCheckPath: /api/v1/health/ready
     preDeployCommand: python -m alembic upgrade head
     envVars:
       - key: APP_ENV
