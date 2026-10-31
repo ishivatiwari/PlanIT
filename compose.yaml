@@ -1,0 +1,76 @@
+name: eventora
+services:
+  db:
+    image: postgres:18.4-bookworm
+    environment:
+      POSTGRES_DB: eventora
+      POSTGRES_USER: eventora_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a local database admin password}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set a local application database password}
+      MIGRATION_DB_PASSWORD: ${MIGRATION_DB_PASSWORD:?Set a local migration database password}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./infra/postgres/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U eventora_admin -d eventora"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+  migrate:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://eventora_migrator:${MIGRATION_DB_PASSWORD}@db:5432/eventora
+      AI_ENABLED: "false"
+    command: [python, -m, alembic, upgrade, head]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      APP_ENV: development
+      APP_URL: http://127.0.0.1:3000
+      DATABASE_URL: postgresql+psycopg://eventora_app:${APP_DB_PASSWORD}@db:5432/eventora
+      AI_ENABLED: ${AI_ENABLED:-false}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-45}
+      AI_MAX_RETRIES: ${AI_MAX_RETRIES:-1}
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-6000}
+      AI_DAILY_REQUESTS: ${AI_DAILY_REQUESTS:-20}
+      LOG_LEVEL: INFO
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+    restart: unless-stopped
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      API_INTERNAL_URL: http://api:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/v1/health/ready', {signal: AbortSignal.timeout(5000)}).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+    restart: unless-stopped
+volumes:
+  postgres_data:

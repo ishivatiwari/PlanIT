@@ -1,0 +1,30 @@
+:root {
+  --paper: #f8f9f5;
+  --white: #fff;
+  --ink: #243c32;
+  --muted: #626c65;
+  --green: #304f3c;
+  --green-hover: #213b2b;
+  --pale: #edf1e8;
+  --line: #dfe5da;
+  --control-border: #7b887a;
+  --focus: #9a5c19;
+  --error: #923c2d;
+  --error-surface: #fff3ee;
+  --success: #3d6536;
+  --success-surface: #edf4e8;
+  --warning: #835218;
+  --warning-surface: #fff2df;
+  --font-body: Arial, Helvetica, sans-serif;
+  --font-display: Georgia, "Times New Roman", serif;
+  --radius-sm: 0.5rem;
+  --radius: 1rem;
+  --radius-lg: 1.5rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+}

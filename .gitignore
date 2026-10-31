@@ -1,0 +1,29 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# Local runtime data and verification artifacts
+.local/
+artifacts/
+# JavaScript
+node_modules/
+.next/
+out/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
