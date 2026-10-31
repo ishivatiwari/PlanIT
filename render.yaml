@@ -1,20 +1,29 @@
 services:
   - type: web
     name: planit-web
+    plan: free
     runtime: docker
     dockerfilePath: apps/web/Dockerfile
     dockerContext: .
     healthCheckPath: /api/v1/health/ready
     envVars:
       - key: API_INTERNAL_URL
-        value: http://planit-api:8000
+        fromService:
+          type: web
+          name: planit-api
+          envVarKey: RENDER_EXTERNAL_URL
 
-  - type: pserv
+  - type: web
     name: planit-api
+    plan: free
     runtime: docker
     dockerfilePath: services/api/Dockerfile
     dockerContext: .
-    preDeployCommand: python -m alembic upgrade head
+    dockerCommand: >
+      sh -c "python -m alembic upgrade head &&
+      python -m uvicorn app.main:create_app --factory
+      --host 0.0.0.0 --port $PORT
+      --no-access-log --no-proxy-headers"
     envVars:
       - key: APP_ENV
         value: production
