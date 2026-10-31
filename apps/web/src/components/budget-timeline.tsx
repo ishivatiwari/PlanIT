@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "@/lib/api";
+import type { EventRead as Event, TaskRead as Task } from "@/lib/api-types";
 import { formatMoney, parseMinor } from "@/lib/money";
 import { RequireAccount, useAuth } from "./auth-provider";
 import { Button, ButtonLink } from "./ui/button";
@@ -22,22 +23,6 @@ type Summary = {
   scenario: string;
   savings_alternatives: string[];
   category_totals: { category: string; planned_minor: number }[];
-};
-type Event = {
-  title: string;
-  currency: Currency;
-  revision: number;
-  status: string;
-};
-type Task = {
-  id: string;
-  title: string;
-  status: string;
-  owner: string;
-  priority: string;
-  due_at: string | null;
-  critical: boolean;
-  delayed: boolean;
 };
 
 export function BudgetTimeline({ eventId }: { eventId: string }) {
@@ -76,47 +61,91 @@ function BudgetTimelineContent({ eventId }: { eventId: string }) {
     ...(summary?.category_totals.map((item) => item.planned_minor) ?? []),
     1,
   );
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(
+    async (
+      scope: "all" | "event" | "timeline" = "all",
+      selectedScenario = "balanced",
+      signal?: AbortSignal,
+    ) => {
+      try {
+        const [loadedEvent, loadedSummary, loadedTasks] = await Promise.all([
+          api<Event>(`/events/${eventId}`, { signal }),
+          scope === "all"
+            ? api<Summary>(
+                `/events/${eventId}/budget?scenario=${selectedScenario}`,
+                { signal },
+              )
+            : undefined,
+          scope !== "event"
+            ? api<Task[]>(`/events/${eventId}/timeline`, { signal })
+            : undefined,
+        ]);
+        if (signal?.aborted) return;
+        setEvent(loadedEvent);
+        if (loadedSummary) setSummary(loadedSummary);
+        if (loadedTasks) setTasks(loadedTasks);
+        setError("");
+      } catch (failure) {
+        if (!signal?.aborted) setError(errorMessage(failure));
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [eventId],
+  );
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => void refresh("all", "balanced", controller.signal),
+      0,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [refresh]);
+
+  async function changeScenario(selected: string) {
+    if (saving) return;
+    setSaving("scenario");
+    setNotice("");
     try {
-      const [loadedEvent, loadedSummary, loadedTasks] = await Promise.all([
-        api<Event>(`/events/${eventId}`),
-        api<Summary>(`/events/${eventId}/budget?scenario=${scenario}`),
-        api<Task[]>(`/events/${eventId}/timeline`),
-      ]);
-      setEvent(loadedEvent);
-      setSummary(loadedSummary);
-      setTasks(loadedTasks);
+      const loaded = await api<Summary>(
+        `/events/${eventId}/budget?scenario=${selected}`,
+      );
+      setSummary(loaded);
+      setScenario(selected);
       setError("");
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
-      setLoading(false);
+      setSaving(null);
     }
-  }, [eventId, scenario]);
-  useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), 0);
-    return () => window.clearTimeout(timer);
-  }, [refresh]);
+  }
 
   async function addBudget(submission: FormEvent<HTMLFormElement>) {
     submission.preventDefault();
     if (!event || !summary || !session || saving) return;
     try {
       setSaving("budget");
-      await api(`/events/${eventId}/budget/items?scenario=${scenario}`, {
-        method: "POST",
-        csrf: session.csrf_token,
-        revision: event.revision,
-        data: {
-          category: budget.category,
-          description: budget.description,
-          estimated_minor: parseMinor(budget.estimated, summary.currency) ?? 0,
-          planned_minor: parseMinor(budget.planned, summary.currency) ?? 0,
-          actual_minor: parseMinor(budget.actual, summary.currency) ?? 0,
-          scenario,
+      setNotice("");
+      const savedSummary = await api<Summary>(
+        `/events/${eventId}/budget/items?scenario=${scenario}`,
+        {
+          method: "POST",
+          csrf: session.csrf_token,
+          revision: event.revision,
+          data: {
+            category: budget.category,
+            description: budget.description,
+            estimated_minor:
+              parseMinor(budget.estimated, summary.currency) ?? 0,
+            planned_minor: parseMinor(budget.planned, summary.currency) ?? 0,
+            actual_minor: parseMinor(budget.actual, summary.currency) ?? 0,
+            scenario,
+          },
         },
-      });
+      );
       setBudget({
         category: "",
         description: "",
@@ -124,7 +153,8 @@ function BudgetTimelineContent({ eventId }: { eventId: string }) {
         planned: "",
         actual: "",
       });
-      await refresh();
+      setSummary(savedSummary);
+      await refresh("event");
       setNotice("Budget line saved.");
     } catch (failure) {
       setError(errorMessage(failure));
@@ -138,6 +168,7 @@ function BudgetTimelineContent({ eventId }: { eventId: string }) {
     if (!event || !session || saving) return;
     try {
       setSaving("task");
+      setNotice("");
       await api(`/events/${eventId}/timeline/tasks`, {
         method: "POST",
         csrf: session.csrf_token,
@@ -157,7 +188,7 @@ function BudgetTimelineContent({ eventId }: { eventId: string }) {
         dueAt: "",
         description: "",
       });
-      await refresh();
+      await refresh("timeline");
       setNotice("Timeline task saved.");
     } catch (failure) {
       setError(errorMessage(failure));
@@ -169,6 +200,7 @@ function BudgetTimelineContent({ eventId }: { eventId: string }) {
   async function updateTask(taskId: string, status: string) {
     if (!event || !session || saving) return;
     setSaving(taskId);
+    setNotice("");
     try {
       await api(`/events/${eventId}/timeline/tasks/${taskId}`, {
         method: "PATCH",
@@ -176,7 +208,7 @@ function BudgetTimelineContent({ eventId }: { eventId: string }) {
         revision: event.revision,
         data: { status },
       });
-      await refresh();
+      await refresh("timeline");
       setNotice("Task progress saved.");
     } catch (failure) {
       setError(errorMessage(failure));
@@ -231,7 +263,8 @@ function BudgetTimelineContent({ eventId }: { eventId: string }) {
                   Scenario
                   <select
                     value={scenario}
-                    onChange={(e) => setScenario(e.target.value)}
+                    disabled={saving !== null}
+                    onChange={(e) => void changeScenario(e.target.value)}
                   >
                     <option value="economical">Economical</option>
                     <option value="balanced">Balanced</option>
@@ -353,7 +386,10 @@ function BudgetTimelineContent({ eventId }: { eventId: string }) {
                   ))}
                 </ul>
               )}
-              <Button onClick={() => void refresh()}>
+              <Button
+                disabled={saving !== null}
+                onClick={() => void refresh("all", scenario)}
+              >
                 Refresh persisted data
               </Button>
             </Card>

@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.api.dependencies import DB
 from app.api.events import owned_event
 from app.core.auth import Authenticated
-from app.db.models import BudgetItem, EventPlanVersion, Task, Vendor, VendorQuote
+from app.db.models import BudgetItem, Event, EventPlanVersion, Task, Vendor, VendorQuote
 from app.domain.budget_timeline import budget_summary
 
 router = APIRouter(prefix="/api/v1/events/{event_id}", tags=["Exports"])
@@ -26,11 +26,12 @@ def _json_value(value: object) -> object:
     return value
 
 
-def _payload(db: Any, event: Any) -> dict[str, Any]:
+def _payload(db: DB, event: Event) -> dict[str, Any]:
     plan = db.scalar(
         select(EventPlanVersion)
         .where(EventPlanVersion.event_id == event.id)
         .order_by(EventPlanVersion.sequence.desc())
+        .limit(1)
     )
     items = db.scalars(
         select(BudgetItem).where(BudgetItem.event_id == event.id).order_by(BudgetItem.created_at)

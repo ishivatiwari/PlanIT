@@ -40,7 +40,12 @@ export async function api<T>(
         options.data === undefined ? undefined : JSON.stringify(options.data),
       credentials: "same-origin",
       cache: "no-store",
-      signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? 12000),
+      signal: options.signal
+        ? AbortSignal.any([
+            options.signal,
+            AbortSignal.timeout(options.timeoutMs ?? 12000),
+          ])
+        : AbortSignal.timeout(options.timeoutMs ?? 12000),
     });
   } catch (error) {
     if (options.signal?.aborted) throw error;

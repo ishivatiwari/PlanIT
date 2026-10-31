@@ -60,6 +60,15 @@ def precondition(event: Event, if_match: str | None) -> None:
         )
 
 
+def editable_event(db: DB, event_id: UUID, owner_id: UUID, if_match: str | None) -> Event:
+    """Lock the owned aggregate and enforce the shared mutation preconditions."""
+    event = owned_event(db, event_id, owner_id, lock=True)
+    precondition(event, if_match)
+    if event.status == "archived":
+        raise APIError(409, "EVENT_ARCHIVED", "Archived events are read-only.")
+    return event
+
+
 def audit(db: DB, request: Request, event: Event, action: str, fields: list[str]) -> None:
     db.add(
         AuditEvent(

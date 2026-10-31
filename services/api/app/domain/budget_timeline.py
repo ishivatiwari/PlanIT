@@ -45,13 +45,15 @@ def budget_summary(
 ) -> dict[str, Any]:
     if scenario not in SCENARIOS or not 0 <= reserve_bps <= 5000:
         raise ValueError("Invalid scenario or contingency reserve.")
-    rows = [i for i in items if i.scenario == scenario]
     by_category: dict[str, int] = defaultdict(int)
-    for item in rows:
+    estimated = planned = actual = 0
+    for item in items:
+        if item.scenario != scenario:
+            continue
         by_category[getattr(item, "category", "Uncategorized")] += item.planned_minor
-    estimated = sum(i.estimated_minor for i in rows)
-    planned = sum(i.planned_minor for i in rows)
-    actual = sum(i.actual_minor for i in rows)
+        estimated += item.estimated_minor
+        planned += item.planned_minor
+        actual += item.actual_minor
     reserve = (planned * reserve_bps + 9999) // 10000
     projected = planned + reserve
     if any(x > MAX_MONEY for x in (estimated, planned, actual, reserve, projected)):

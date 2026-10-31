@@ -6,10 +6,10 @@ from fastapi import APIRouter, Header, Request
 from sqlalchemy import func, select
 
 from app.api.dependencies import DB
-from app.api.events import audit, owned_event, precondition
+from app.api.events import audit, editable_event, owned_event
 from app.core.auth import Authenticated, AuthorizedMutation
 from app.core.errors import APIError
-from app.db.models import EventPlanVersion, ReplanProposal, Task, Vendor
+from app.db.models import EventPlanVersion, ReplanProposal, Task
 from app.domain.planning import PlanDocument
 from app.domain.replanning import analyze_replan
 from app.domain.schemas import ReplanRead, ReplanRequest
@@ -26,6 +26,7 @@ def base_plan(db: DB, event_id: UUID) -> EventPlanVersion:
         select(EventPlanVersion)
         .where(EventPlanVersion.event_id == event_id, EventPlanVersion.document.is_not(None))
         .order_by(EventPlanVersion.sequence.desc())
+        .limit(1)
     )
     if row is None:
         raise APIError(409, "PLAN_REQUIRED", "Create a reviewable plan before requesting a replan.")
@@ -55,16 +56,18 @@ def propose_replan(
     identity: AuthorizedMutation,
     if_match: Annotated[str | None, Header()] = None,
 ) -> ReplanRead:
-    event = owned_event(db, event_id, identity.user.id, lock=True)
-    precondition(event, if_match)
-    if event.status == "archived":
-        raise APIError(409, "EVENT_ARCHIVED", "Archived events are read-only.")
+    event = editable_event(db, event_id, identity.user.id, if_match)
     plan = base_plan(db, event_id)
-    tasks = db.scalars(select(Task).where(Task.event_id == event_id)).all()
-    vendors = db.scalars(select(Vendor).where(Vendor.event_id == event_id)).all()
+    tasks = []
+    if payload.change_type == "task_delay":
+        try:
+            task_id = UUID(str(payload.details.get("task_id", "")))
+        except ValueError:
+            raise APIError(422, "INFEASIBLE_REPLAN", "Choose a task from this event.") from None
+        tasks = list(db.scalars(select(Task).where(Task.event_id == event_id, Task.id == task_id)))
     try:
         impact, alternative = analyze_replan(
-            payload.change_type, payload.details, plan.document or {}, tasks, vendors, event
+            payload.change_type, payload.details, plan.document or {}, tasks, [], event
         )
         PlanDocument.model_validate(alternative)
     except (ValueError, TypeError) as exc:
@@ -95,8 +98,7 @@ def reject_replan(
     identity: AuthorizedMutation,
     if_match: Annotated[str | None, Header()] = None,
 ) -> ReplanRead:
-    event = owned_event(db, event_id, identity.user.id, lock=True)
-    precondition(event, if_match)
+    event = editable_event(db, event_id, identity.user.id, if_match)
     row = db.scalar(
         select(ReplanProposal)
         .where(
@@ -126,8 +128,7 @@ def approve_replan(
     identity: AuthorizedMutation,
     if_match: Annotated[str | None, Header()] = None,
 ) -> ReplanRead:
-    event = owned_event(db, event_id, identity.user.id, lock=True)
-    precondition(event, if_match)
+    event = editable_event(db, event_id, identity.user.id, if_match)
     row = db.scalar(
         select(ReplanProposal)
         .where(

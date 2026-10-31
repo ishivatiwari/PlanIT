@@ -1,14 +1,12 @@
 from datetime import UTC, datetime
-
-# mypy: ignore-errors
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Request
 from sqlalchemy import select
 
 from app.api.dependencies import DB
-from app.api.events import audit, owned_event, precondition
+from app.api.events import audit, editable_event, owned_event
 from app.core.auth import Authenticated, AuthorizedMutation
 from app.core.errors import APIError
 from app.db.models import Vendor, VendorQuote
@@ -53,7 +51,7 @@ def list_vendors(
     category: str | None = None,
     provenance: str | None = None,
     sort: Annotated[str, Query(pattern="^(name|price|category)$")] = "name",
-):
+) -> list[VendorRead]:
     owned_event(db, event_id, identity.user.id)
     query = select(Vendor).where(Vendor.event_id == event_id)
     if category:
@@ -61,8 +59,15 @@ def list_vendors(
     if provenance:
         query = query.where(Vendor.provenance == provenance)
     rows = db.scalars(query.order_by(Vendor.category if sort == "category" else Vendor.name)).all()
-    quotes = db.scalars(select(VendorQuote).where(VendorQuote.event_id == event_id)).all()
-    by: dict[Any, list[VendorQuote]] = {}
+    if not rows:
+        return []
+    quotes = db.scalars(
+        select(VendorQuote).where(
+            VendorQuote.event_id == event_id,
+            VendorQuote.vendor_id.in_(query.with_only_columns(Vendor.id)),
+        )
+    ).all()
+    by: dict[UUID, list[VendorQuote]] = {}
     for q in quotes:
         by.setdefault(q.vendor_id, []).append(q)
     if sort == "price":
@@ -80,11 +85,8 @@ def create_vendor(
     db: DB,
     identity: AuthorizedMutation,
     if_match: Annotated[str | None, Header()] = None,
-):
-    event = owned_event(db, event_id, identity.user.id, lock=True)
-    precondition(event, if_match)
-    if event.status == "archived":
-        raise APIError(409, "EVENT_ARCHIVED", "Archived events are read-only.")
+) -> VendorRead:
+    event = editable_event(db, event_id, identity.user.id, if_match)
     if payload.provenance == "demo_seeded" and not payload.source_label.lower().startswith("demo"):
         raise APIError(
             422, "PROVENANCE_REQUIRED", "Demonstration records need a demonstration source label."
@@ -107,17 +109,16 @@ def add_quote(
     db: DB,
     identity: AuthorizedMutation,
     if_match: Annotated[str | None, Header()] = None,
-):
-    event = owned_event(db, event_id, identity.user.id, lock=True)
-    precondition(event, if_match)
+) -> VendorRead:
+    event = editable_event(db, event_id, identity.user.id, if_match)
+    if payload.vendor_id != vendor_id:
+        raise APIError(422, "VENDOR_MISMATCH", "The quote must reference the selected vendor.")
     vendor = db.scalar(
         select(Vendor).where(Vendor.id == vendor_id, Vendor.event_id == event_id).with_for_update()
     )
     if not vendor:
         raise APIError(404, "VENDOR_NOT_FOUND", "This vendor could not be found.")
-    quote = VendorQuote(
-        event_id=event_id, vendor_id=vendor_id, currency=event.currency, **payload.model_dump()
-    )
+    quote = VendorQuote(event_id=event_id, currency=event.currency, **payload.model_dump())
     db.add(quote)
     event.revision += 1
     event.updated_at = datetime.now(UTC)

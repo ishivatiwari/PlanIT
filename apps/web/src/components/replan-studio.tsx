@@ -46,12 +46,7 @@ function ReplanContent({ eventId }: { eventId: string }) {
   const [loading, setLoading] = useState(true);
   const refresh = useCallback(async () => {
     try {
-      const [loadedEvent, loadedTasks] = await Promise.all([
-        api<Event>(`/events/${eventId}`),
-        api<{ id: string; title: string }[]>(`/events/${eventId}/timeline`),
-      ]);
-      setEvent(loadedEvent);
-      setTasks(loadedTasks);
+      setEvent(await api<Event>(`/events/${eventId}`));
     } catch (e) {
       setMessage(errorMessage(e));
     } finally {
@@ -62,6 +57,20 @@ function ReplanContent({ eventId }: { eventId: string }) {
     const t = window.setTimeout(() => void refresh(), 0);
     return () => window.clearTimeout(t);
   }, [refresh]);
+  useEffect(() => {
+    if (kind !== "task_delay") return;
+    const controller = new AbortController();
+    void api<{ id: string; title: string }[]>(`/events/${eventId}/timeline`, {
+      signal: controller.signal,
+    })
+      .then((loaded) => {
+        if (!controller.signal.aborted) setTasks(loaded);
+      })
+      .catch((failure) => {
+        if (!controller.signal.aborted) setMessage(errorMessage(failure));
+      });
+    return () => controller.abort();
+  }, [eventId, kind]);
   async function propose() {
     if (!event || !session || saving) return;
     setSaving(true);

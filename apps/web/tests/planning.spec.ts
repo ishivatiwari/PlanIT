@@ -134,22 +134,58 @@ test("extract, clarify, generate, edit, save and reload a structured plan", asyn
     .getByRole("textbox", { name: "Description (required)", exact: true })
     .fill("Room rental");
   await page.getByLabel("Planned", { exact: true }).fill("1250.50");
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      request.method() === "GET" &&
+      url.pathname.startsWith(`/api/v1/events/${event.id}`)
+    ) {
+      reads.push(url.pathname + url.search);
+    }
+  });
   await page
     .getByRole("button", { name: "Add budget line", exact: true })
     .click();
   await expect(
     page.getByRole("status").filter({ hasText: "Budget line saved" }),
   ).toBeVisible();
+  expect(reads).toEqual([`/api/v1/events/${event.id}`]);
+  reads.length = 0;
+  await page
+    .getByRole("combobox", { name: "Scenario", exact: true })
+    .selectOption("premium");
+  await expect(
+    page.getByRole("combobox", { name: "Scenario", exact: true }),
+  ).toHaveValue("premium");
+  expect(reads).toEqual([`/api/v1/events/${event.id}/budget?scenario=premium`]);
+  await page
+    .getByRole("combobox", { name: "Scenario", exact: true })
+    .selectOption("balanced");
+  await expect(
+    page.getByRole("combobox", { name: "Scenario", exact: true }),
+  ).toHaveValue("balanced");
+  reads.length = 0;
   await page
     .getByRole("textbox", { name: "Task (required)", exact: true })
     .fill("Confirm venue");
   await page.getByLabel("Owner", { exact: true }).fill("Host");
   await page.getByRole("button", { name: "Add task", exact: true }).click();
   const progress = page.getByLabel("Progress for Confirm venue");
+  await expect(progress).toBeEnabled();
+  expect(reads.sort()).toEqual([
+    `/api/v1/events/${event.id}`,
+    `/api/v1/events/${event.id}/timeline`,
+  ]);
+  reads.length = 0;
   await progress.selectOption("done");
   await expect(
     page.getByRole("status").filter({ hasText: "Task progress saved" }),
   ).toBeVisible();
+  expect(reads.sort()).toEqual([
+    `/api/v1/events/${event.id}`,
+    `/api/v1/events/${event.id}/timeline`,
+  ]);
   await page.reload();
   await expect(page.getByLabel("Progress for Confirm venue")).toHaveValue(
     "done",
@@ -168,8 +204,10 @@ test("extract, clarify, generate, edit, save and reload a structured plan", asyn
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(320);
+  reads.length = 0;
   await page.goto(`/events/${event.id}/replan`);
   await page.getByLabel("Change detail").fill("40");
+  expect(reads).toEqual([`/api/v1/events/${event.id}`]);
   await page.getByRole("button", { name: "Analyse impact" }).click();
   await expect(
     page.getByRole("heading", { name: "Before and after review" }),

@@ -1,13 +1,14 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, Query, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.dependencies import DB
-from app.api.events import audit, owned_event, precondition
+from app.api.events import audit, editable_event, owned_event
 from app.core.auth import Authenticated, AuthorizedMutation
 from app.core.errors import APIError
 from app.db.models import BudgetItem, Event, EventPlanVersion, Task
@@ -24,21 +25,32 @@ from app.domain.schemas import (
 router = APIRouter(prefix="/api/v1/events/{event_id}", tags=["Budget and timeline"])
 
 
-def _items(db: DB, event_id: UUID, owner: UUID) -> Sequence[BudgetItem]:
-    owned_event(db, event_id, owner)
-    return db.scalars(
-        select(BudgetItem)
-        .where(BudgetItem.event_id == event_id)
-        .order_by(BudgetItem.created_at, BudgetItem.id)
-    ).all()
+@dataclass(frozen=True)
+class CategoryTotals:
+    scenario: str
+    category: str
+    estimated_minor: int
+    planned_minor: int
+    actual_minor: int
 
 
-def editable_event(db: DB, event_id: UUID, owner: UUID, if_match: str | None) -> Event:
-    event = owned_event(db, event_id, owner, lock=True)
-    precondition(event, if_match)
-    if event.status == "archived":
-        raise APIError(409, "EVENT_ARCHIVED", "Archived events are read-only.")
-    return event
+def budget_categories(db: DB, event: Event, scenarios: set[str]) -> list[CategoryTotals]:
+    """Aggregate only authorized scenarios; transfer category totals, not expense records."""
+    rows = db.execute(
+        select(
+            BudgetItem.scenario,
+            BudgetItem.category,
+            func.sum(BudgetItem.estimated_minor),
+            func.sum(BudgetItem.planned_minor),
+            func.sum(BudgetItem.actual_minor),
+        )
+        .where(BudgetItem.event_id == event.id, BudgetItem.scenario.in_(scenarios))
+        .group_by(BudgetItem.scenario, BudgetItem.category)
+    )
+    return [
+        CategoryTotals(scenario, category, int(estimated), int(planned), int(actual))
+        for scenario, category, estimated, planned, actual in rows
+    ]
 
 
 def validate_timeline(rows: Sequence[Task], event: Event) -> None:
@@ -48,10 +60,10 @@ def validate_timeline(rows: Sequence[Task], event: Event) -> None:
         raise APIError(422, "INVALID_TIMELINE", str(exc)) from None
 
 
-def summarize_budget(db: DB, event: Event, scenario: str) -> dict[str, Any]:
+def summarize_budget(rows: Sequence[CategoryTotals], event: Event, scenario: str) -> dict[str, Any]:
     try:
         return budget_summary(
-            _items(db, event.id, event.owner_id),
+            rows,
             event.budget_ceiling_minor,
             event.contingency_bps,
             scenario,
@@ -69,7 +81,7 @@ def get_budget(
     scenario: Annotated[str, Query(pattern="^(economical|balanced|premium)$")] = "balanced",
 ) -> dict[str, Any]:
     event = owned_event(db, event_id, identity.user.id)
-    return summarize_budget(db, event, scenario)
+    return summarize_budget(budget_categories(db, event, {scenario}), event, scenario)
 
 
 @router.post("/budget/items", response_model=BudgetSummary, status_code=201)
@@ -84,15 +96,16 @@ def add_budget(
 ) -> dict[str, Any]:
     event = editable_event(db, event_id, identity.user.id, if_match)
     plan = db.scalar(
-        select(EventPlanVersion)
+        select(EventPlanVersion.id)
         .where(EventPlanVersion.event_id == event_id)
         .order_by(EventPlanVersion.sequence.desc())
+        .limit(1)
     )
     if not plan:
         raise APIError(409, "PLAN_REQUIRED", "Create an initial plan before adding budget items.")
     item = BudgetItem(
         event_id=event_id,
-        plan_id=plan.id,
+        plan_id=plan,
         currency=event.currency,
         quantity=1,
         unit_amount_minor=0,
@@ -105,9 +118,10 @@ def add_budget(
     event.updated_at = datetime.now(UTC)
     audit(db, request, event, "event.updated", ["budget"])
     db.flush()
-    result = summarize_budget(db, event, scenario)
+    rows = budget_categories(db, event, {scenario, item.scenario})
+    result = summarize_budget(rows, event, scenario)
     if item.scenario != scenario:
-        summarize_budget(db, event, item.scenario)
+        summarize_budget(rows, event, item.scenario)
     db.commit()
     return result
 
@@ -155,16 +169,17 @@ def edit_budget(
     )
     if not item:
         raise APIError(404, "BUDGET_ITEM_NOT_FOUND", "This budget item could not be found.")
-    before = summarize_budget(db, event, scenario)
+    before = summarize_budget(budget_categories(db, event, {scenario}), event, scenario)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(item, key, value)
     event.revision += 1
     event.updated_at = datetime.now(UTC)
     audit(db, request, event, "event.updated", ["budget"])
     db.flush()
-    after = summarize_budget(db, event, scenario)
+    rows = budget_categories(db, event, {scenario, item.scenario})
+    after = summarize_budget(rows, event, scenario)
     if item.scenario != scenario:
-        summarize_budget(db, event, item.scenario)
+        summarize_budget(rows, event, item.scenario)
     after["before"] = {
         k: before[k] for k in ("estimated_minor", "planned_minor", "actual_minor", "reserve_minor")
     }
@@ -232,8 +247,12 @@ def edit_task(
         changes["completed_at"] = None
     for k, v in changes.items():
         setattr(task, k, v)
-    with db.no_autoflush:
-        validate_timeline(db.scalars(select(Task).where(Task.event_id == event_id)).all(), event)
+    # Status/title/owner changes cannot alter graph validity or deadline ordering.
+    if payload.model_fields_set & {"depends_on", "due_at"}:
+        with db.no_autoflush:
+            validate_timeline(
+                db.scalars(select(Task).where(Task.event_id == event_id)).all(), event
+            )
     event.revision += 1
     event.updated_at = datetime.now(UTC)
     audit(db, request, event, "event.updated", ["timeline"])
