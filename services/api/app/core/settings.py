@@ -92,7 +92,12 @@ class Settings(BaseSettings):
         if value is None:
             return value
         try:
-            url = make_url(value.get_secret_value())
+            raw_url = value.get_secret_value()
+            if raw_url.startswith("postgres://"):
+                raw_url = "postgresql+psycopg://" + raw_url.removeprefix("postgres://")
+            elif raw_url.startswith("postgresql://"):
+                raw_url = "postgresql+psycopg://" + raw_url.removeprefix("postgresql://")
+            url = make_url(raw_url)
             valid = (
                 url.drivername == "postgresql+psycopg"
                 and url.username
@@ -107,7 +112,7 @@ class Settings(BaseSettings):
             valid = False
         if not valid:
             raise ValueError("Use a complete PostgreSQL psycopg connection URL.")
-        return value
+        return SecretStr(raw_url)
 
 
 def load_settings() -> Settings:

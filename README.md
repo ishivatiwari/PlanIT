@@ -98,6 +98,10 @@ docker compose --env-file .env.compose up --build --wait
 
 The local Compose profile uses APP_ENV=development and loopback HTTP; it is not a production deployment preset. Separate runtime/migration roles, a one-shot migration service, API readiness ordering and a named PostgreSQL volume are configured. Only web is published to loopback. `docker compose --env-file .env.compose down` stops without deleting volumes. Editing environment passwords does not rotate existing database credentials.
 
+## Render deployment
+
+`render.yaml` defines the full production topology: a public Next.js web service, a private FastAPI service and managed PostgreSQL. Render runs the API migration before deploy, forwards the web service to the private API over the internal network and supplies the public web URL to the API for production cookie/origin checks. Add `GEMINI_API_KEY` only in Render's secret prompt or dashboard; it is intentionally absent from the Blueprint and repository. The free database entry is suitable only for evaluation; choose an appropriate paid database and service plan before a production launch.
+
 ## Structure and boundaries
 
 | Path | Responsibility |
